@@ -1,0 +1,99 @@
+{
+  "name": "context-optimizer",
+  "displayName": "Context Optimizer",
+  "description": "Compress project context into optimized AI prompts. Save 90%+ tokens when switching AI assistants.",
+  "version": "1.0.0",
+  "engines": { "vscode": "^1.85.0" },
+  "categories": ["Other", "Machine Learning"],
+  "keywords": ["AI", "context", "tokens", "ChatGPT", "Claude", "Copilot", "prompt", "memory"],
+  "activationEvents": ["onStartupFinished"],
+  "main": "./out/extension.js",
+  "icon": "media/icon.png",
+  "contributes": {
+    "commands": [
+      { "command": "contextOptimizer.generateContext", "title": "Generate Context", "category": "Context Optimizer" },
+      { "command": "contextOptimizer.updateContext", "title": "Update Context", "category": "Context Optimizer" },
+      { "command": "contextOptimizer.exportPrompt", "title": "Export Prompt", "category": "Context Optimizer" },
+      { "command": "contextOptimizer.showTokenSavings", "title": "Show Token Savings", "category": "Context Optimizer" },
+      { "command": "contextOptimizer.resetMemory", "title": "Reset Memory", "category": "Context Optimizer" },
+      { "command": "contextOptimizer.openDashboard", "title": "Open Dashboard", "category": "Context Optimizer" },
+      { "command": "contextOptimizer.addNote", "title": "Add Developer Note", "category": "Context Optimizer" },
+      { "command": "contextOptimizer.generateReadme", "title": "Generate README", "category": "Context Optimizer" }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "contextOptimizer",
+          "title": "Context Optimizer",
+          "icon": "media/activity-icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "contextOptimizer": [
+        { "id": "contextOptimizer.summary", "name": "Project Summary" },
+        { "id": "contextOptimizer.features", "name": "Features" },
+        { "id": "contextOptimizer.files", "name": "Important Files" },
+        { "id": "contextOptimizer.tokens", "name": "Token Savings" }
+      ]
+    },
+    "menus": {
+      "view/title": [
+        {
+          "command": "contextOptimizer.generateContext",
+          "when": "view == contextOptimizer.summary",
+          "group": "navigation"
+        },
+        {
+          "command": "contextOptimizer.exportPrompt",
+          "when": "view == contextOptimizer.summary",
+          "group": "navigation"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Context Optimizer",
+      "properties": {
+        "contextOptimizer.autoUpdate": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically update context on file save"
+        },
+        "contextOptimizer.gitIntegration": {
+          "type": "boolean",
+          "default": true,
+          "description": "Update context on git commits"
+        },
+        "contextOptimizer.ignorePatterns": {
+          "type": "array",
+          "default": ["node_modules", "dist", "build", ".cache", "logs", "*.jpg", "*.png", "*.mp4"],
+          "description": "Glob patterns to ignore when scanning files"
+        },
+        "contextOptimizer.maxFileSizeKB": {
+          "type": "number",
+          "default": 100,
+          "description": "Maximum file size in KB to analyze"
+        },
+        "contextOptimizer.compressionLevel": {
+          "type": "string",
+          "enum": ["light", "standard", "aggressive"],
+          "default": "standard",
+          "description": "How aggressively to compress context"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.85.0",
+    "typescript": "^5.3.0"
+  },
+  "dependencies": {
+    "ignore": "^5.3.0"
+  }
+}

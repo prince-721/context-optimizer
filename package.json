@@ -1,0 +1,291 @@
+{
+  "name": "context-optimizer",
+  "displayName": "Context Optimizer",
+  "description": "Automatically compresses your project context into optimized AI prompts — saving up to 95% of tokens when switching AI assistants.",
+  "version": "1.0.0",
+  "publisher": "context-optimizer",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/username/context-optimizer"
+  },
+  "license": "MIT",
+  "icon": "media/icon.png",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "AI",
+    "Other",
+    "Programming Languages"
+  ],
+  "keywords": [
+    "ai",
+    "context",
+    "tokens",
+    "memory",
+    "compression",
+    "chatgpt",
+    "claude",
+    "gemini",
+    "copilot",
+    "productivity"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "contextOptimizer",
+          "title": "Context Optimizer",
+          "icon": "media/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "contextOptimizer": [
+        {
+          "id": "contextOptimizer.summaryView",
+          "name": "Project Memory",
+          "icon": "$(sparkle)",
+          "contextualTitle": "Context Optimizer"
+        },
+        {
+          "id": "contextOptimizer.filesView",
+          "name": "Key Files",
+          "icon": "$(files)",
+          "contextualTitle": "Context Optimizer"
+        },
+        {
+          "id": "contextOptimizer.statsView",
+          "name": "Token Savings",
+          "icon": "$(graph)",
+          "contextualTitle": "Context Optimizer"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "contextOptimizer.generateContext",
+        "title": "Generate Context",
+        "category": "Context Optimizer",
+        "icon": "$(sparkle)"
+      },
+      {
+        "command": "contextOptimizer.updateContext",
+        "title": "Update Context",
+        "category": "Context Optimizer",
+        "icon": "$(sync)"
+      },
+      {
+        "command": "contextOptimizer.exportPrompt",
+        "title": "Export Optimized Prompt",
+        "category": "Context Optimizer",
+        "icon": "$(export)"
+      },
+      {
+        "command": "contextOptimizer.exportMarkdown",
+        "title": "Export as Markdown",
+        "category": "Context Optimizer",
+        "icon": "$(markdown)"
+      },
+      {
+        "command": "contextOptimizer.exportJson",
+        "title": "Export as JSON",
+        "category": "Context Optimizer",
+        "icon": "$(json)"
+      },
+      {
+        "command": "contextOptimizer.exportGraph",
+        "title": "Export Context Graph",
+        "category": "Context Optimizer",
+        "icon": "$(graph)"
+      },
+      {
+        "command": "contextOptimizer.showTokenSavings",
+        "title": "Show Token Savings",
+        "category": "Context Optimizer",
+        "icon": "$(graph-line)"
+      },
+      {
+        "command": "contextOptimizer.openDashboard",
+        "title": "Open Dashboard",
+        "category": "Context Optimizer",
+        "icon": "$(dashboard)"
+      },
+      {
+        "command": "contextOptimizer.resetMemory",
+        "title": "Reset Memory",
+        "category": "Context Optimizer",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "contextOptimizer.addNote",
+        "title": "Add Developer Note",
+        "category": "Context Optimizer",
+        "icon": "$(note)"
+      },
+      {
+        "command": "contextOptimizer.addRule",
+        "title": "Add Project Rule",
+        "category": "Context Optimizer",
+        "icon": "$(law)"
+      },
+      {
+        "command": "contextOptimizer.detectDuplicates",
+        "title": "Detect Duplicate / Dead Code",
+        "category": "Context Optimizer",
+        "icon": "$(search)"
+      },
+      {
+        "command": "contextOptimizer.generateReadme",
+        "title": "Generate README",
+        "category": "Context Optimizer",
+        "icon": "$(book)"
+      },
+      {
+        "command": "contextOptimizer.generateAiArchitectureSummary",
+        "title": "Generate AI Project Summary",
+        "category": "Context Optimizer",
+        "icon": "$(sparkle)"
+      },
+      {
+        "command": "contextOptimizer.refresh",
+        "title": "Refresh",
+        "category": "Context Optimizer",
+        "icon": "$(refresh)"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "contextOptimizer.generateContext",
+          "when": "view == contextOptimizer.summaryView",
+          "group": "navigation@1"
+        },
+        {
+          "command": "contextOptimizer.updateContext",
+          "when": "view == contextOptimizer.summaryView",
+          "group": "navigation@2"
+        },
+        {
+          "command": "contextOptimizer.refresh",
+          "when": "view == contextOptimizer.summaryView",
+          "group": "navigation@3"
+        },
+        {
+          "command": "contextOptimizer.openDashboard",
+          "when": "view == contextOptimizer.summaryView",
+          "group": "navigation@4"
+        },
+        {
+          "command": "contextOptimizer.exportGraph",
+          "when": "view == contextOptimizer.summaryView",
+          "group": "navigation@5"
+        },
+        {
+          "command": "contextOptimizer.exportPrompt",
+          "when": "view == contextOptimizer.filesView",
+          "group": "navigation@1"
+        },
+        {
+          "command": "contextOptimizer.exportGraph",
+          "when": "view == contextOptimizer.filesView",
+          "group": "navigation@2"
+        }
+      ],
+      "commandPalette": [
+        { "command": "contextOptimizer.generateContext" },
+        { "command": "contextOptimizer.updateContext" },
+        { "command": "contextOptimizer.exportPrompt" },
+        { "command": "contextOptimizer.exportMarkdown" },
+        { "command": "contextOptimizer.exportJson" },
+        { "command": "contextOptimizer.exportGraph" },
+        { "command": "contextOptimizer.showTokenSavings" },
+        { "command": "contextOptimizer.openDashboard" },
+        { "command": "contextOptimizer.resetMemory" },
+        { "command": "contextOptimizer.addNote" },
+        { "command": "contextOptimizer.addRule" },
+        { "command": "contextOptimizer.detectDuplicates" },
+        { "command": "contextOptimizer.generateReadme" },
+        { "command": "contextOptimizer.generateAiArchitectureSummary" }
+      ]
+    },
+    "configuration": {
+      "title": "Context Optimizer",
+      "properties": {
+        "contextOptimizer.autoUpdateOnSave": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically update context memory when files are saved."
+        },
+        "contextOptimizer.autoUpdateOnCommit": {
+          "type": "boolean",
+          "default": true,
+          "description": "Update context memory after each git commit."
+        },
+        "contextOptimizer.maxFileSizeKb": {
+          "type": "number",
+          "default": 500,
+          "description": "Maximum file size (KB) to analyze. Larger files will be skipped."
+        },
+        "contextOptimizer.outputDirectory": {
+          "type": "string",
+          "default": ".vscode/context-optimizer",
+          "description": "Directory (relative to workspace root) where memory and exports are stored."
+        },
+        "contextOptimizer.ignorePatterns": {
+          "type": "array",
+          "default": [
+            "node_modules", "dist", "build", ".git", ".cache",
+            "*.log", "*.png", "*.jpg", "*.jpeg", "*.gif", "*.svg",
+            "*.mp4", "*.mp3", "*.webp", "coverage", ".nyc_output",
+            "__pycache__", "*.pyc", ".venv", "venv", "target",
+            ".next", ".nuxt", "out", "public/assets"
+          ],
+          "description": "Glob patterns to ignore during project scanning."
+        },
+        "contextOptimizer.useAiSummarization": {
+          "type": "boolean",
+          "default": true,
+          "description": "Use Groq AI to generate high-quality code summaries instead of regex heuristics."
+        },
+        "contextOptimizer.groqApiKey": {
+          "type": "string",
+          "default": "",
+          "description": "Groq API Key (gsk_...) for AI-based features. Keep empty to fall back to heuristics."
+        },
+        "contextOptimizer.groqModel": {
+          "type": "string",
+          "default": "llama-3.1-8b-instant",
+          "description": "Groq model to use for file analysis and prompt optimization."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run package",
+    "compile": "tsc -p ./tsconfig.json",
+    "watch": "tsc -watch -p ./tsconfig.json",
+    "package": "node esbuild.js --production",
+    "build": "node esbuild.js",
+    "lint": "eslint src --ext ts",
+    "pretest": "npm run compile",
+    "test": "node ./out/test/runTest.js"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/vscode": "^1.85.0",
+    "@typescript-eslint/eslint-plugin": "^6.15.0",
+    "@typescript-eslint/parser": "^6.15.0",
+    "esbuild": "^0.20.0",
+    "typescript": "^5.3.3"
+  },
+  "dependencies": {
+    "gpt-tokenizer": "^2.1.2",
+    "ignore": "^5.3.1",
+    "micromatch": "^4.0.5"
+  }
+}
