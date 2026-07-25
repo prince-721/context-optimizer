@@ -1,4 +1,4 @@
-import { ProjectMemory } from './MemoryManager';
+import { SecretRedactor } from '../utils/secretRedactor';
 
 /** Produces the ultra-compact AI onboarding prompt from project memory */
 export class ContextCompressor {
@@ -18,12 +18,36 @@ export class ContextCompressor {
     sections.push(this.buildArchitecture(mem));
     sections.push(this.buildCodingStyle(mem));
     sections.push(this.buildKeyFiles(mem));
+    sections.push(this.buildTestCoverage(mem));
     sections.push(this.buildBugs(mem));
     sections.push(this.buildRules(mem));
     sections.push(this.buildDeveloperNotes(mem));
     sections.push(this.buildConversationHistory(mem));
 
-    return sections.filter(s => s.trim()).join('\n\n');
+    const raw = sections.filter(s => s.trim()).join('\n\n');
+    return SecretRedactor.sanitize(raw);
+  }
+
+  /** Generates a prompt guaranteed to fit strictly under maxTokens budget */
+  generatePromptUnderBudget(mem: ProjectMemory, maxTokens: number = 4000): string {
+    let fullPrompt = this.generateOptimizedPrompt(mem);
+    const estTokens = Math.ceil(fullPrompt.length / 4);
+
+    if (estTokens <= maxTokens) {
+      return fullPrompt;
+    }
+
+    // Switch to compact representation if full prompt exceeds token budget
+    let minPrompt = this.generateMinimizedPrompt(mem);
+    const minTokens = Math.ceil(minPrompt.length / 4);
+
+    if (minTokens <= maxTokens) {
+      return minPrompt;
+    }
+
+    // Truncate cleanly to character limit corresponding to maxTokens
+    const maxChars = maxTokens * 4;
+    return SecretRedactor.sanitize(minPrompt.slice(0, maxChars) + '\n\n[Context truncated to fit ' + maxTokens + ' token budget]');
   }
 
   /** Ultra-compact single-block prompt for token efficiency */
@@ -230,6 +254,14 @@ export class ContextCompressor {
   private buildDeveloperNotes(mem: ProjectMemory): string {
     if (mem.developerNotes.length === 0) return '';
     return `## Developer Notes\n${mem.developerNotes.slice(0, 10).map(n => `• ${n}`).join('\n')}`;
+  }
+
+  private buildTestCoverage(mem: ProjectMemory): string {
+    const testFiles = mem.files.filter(f => f.priority === 'test' || f.path.includes('.test.') || f.path.includes('.spec.'));
+    if (testFiles.length === 0) return '';
+    let out = `## Test Coverage\n`;
+    out += testFiles.map(f => `[${f.path}] ${f.summary}`).join('\n');
+    return out;
   }
 
   private buildConversationHistory(mem: ProjectMemory): string {

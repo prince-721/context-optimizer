@@ -7,7 +7,7 @@ import {
 } from '../utils/fileUtils';
 import {
   DEFAULT_IGNORE_PATTERNS, CRITICAL_FILE_PATTERNS,
-  FilePriority, MAX_FILE_SIZE_BYTES
+  FilePriority
 } from '../utils/constants';
 import { logger } from '../utils/logger';
 
@@ -28,7 +28,7 @@ export interface ScannedFile {
 }
 
 /** Maps file extensions to language names */
-const EXT_TO_LANGUAGE: Record<string, string> = {
+export const EXT_TO_LANGUAGE: Record<string, string> = {
   ts: 'TypeScript', tsx: 'TypeScript/React', js: 'JavaScript', jsx: 'JavaScript/React',
   py: 'Python', rb: 'Ruby', go: 'Go', rs: 'Rust', java: 'Java', kt: 'Kotlin',
   cs: 'C#', cpp: 'C++', c: 'C', php: 'PHP', swift: 'Swift',
@@ -40,7 +40,7 @@ const EXT_TO_LANGUAGE: Record<string, string> = {
 };
 
 /** Determine priority of a file */
-function determinePriority(relPath: string, fileName: string): FilePriority {
+export function determinePriority(relPath: string, fileName: string): FilePriority {
   const lowerName = fileName.toLowerCase();
   const lowerPath = relPath.toLowerCase().replace(/\\/g, '/');
 
@@ -51,11 +51,19 @@ function determinePriority(relPath: string, fileName: string): FilePriority {
     }
   }
 
-  // Ignore patterns — deeply nested or unimportant
+  // Upgrade 6: Test files tier
   if (
+    lowerName.includes('.test.') ||
+    lowerName.includes('.spec.') ||
     lowerPath.includes('/__tests__/') ||
     lowerPath.includes('/test/') ||
-    lowerPath.includes('/tests/') ||
+    lowerPath.includes('/tests/')
+  ) {
+    return 'test';
+  }
+
+  // Low — deeply nested or unimportant
+  if (
     lowerPath.includes('/.vscode/') ||
     lowerPath.includes('/coverage/') ||
     lowerPath.includes('/storybook/') ||
@@ -129,7 +137,7 @@ export class ProjectScanner {
     for (const absPath of textFiles) {
       try {
         const stat = fs.statSync(absPath);
-        if (!stat.isFile() || stat.size > MAX_FILE_SIZE_BYTES) continue;
+        if (!stat.isFile()) continue;
 
         const relPath = relativePath(this.workspaceRoot, absPath);
         const fileName = path.basename(absPath);
@@ -149,8 +157,8 @@ export class ProjectScanner {
       }
     }
 
-    // Sort: critical → high → medium → low
-    const order: Record<FilePriority, number> = { critical: 0, high: 1, medium: 2, low: 3, ignore: 4 };
+    // Sort: critical → high → medium → low → test
+    const order: Record<FilePriority, number> = { critical: 0, high: 1, medium: 2, low: 3, test: 4, ignore: 5 };
     scanned.sort((a, b) => order[a.priority] - order[b.priority]);
 
     const rootFolders = this.getRootFolders();

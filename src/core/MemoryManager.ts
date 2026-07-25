@@ -17,7 +17,7 @@ export interface ApiEndpoint {
 
 export interface FileRecord {
   path: string;           // relative to workspace root
-  priority: 'critical' | 'high' | 'medium' | 'low';
+  priority: 'critical' | 'high' | 'medium' | 'low' | 'test';
   summary: string;
   lastAnalyzed: string;
   hash: string;
@@ -27,7 +27,7 @@ export interface FileRecord {
 
 export interface ConversationNote {
   date: string;
-  type: 'decision' | 'todo' | 'bugfix' | 'requirement' | 'rejection' | 'note';
+  type: 'decision' | 'todo' | 'bugfix' | 'requirement' | 'rejection' | 'note' | 'completed';
   content: string;
 }
 
@@ -38,6 +38,7 @@ export interface ProjectMemory {
     goals: string[];
     version: string;
   };
+  workspaceRoots?: string[];
   stack: {
     frontend: string;
     backend: string;
@@ -106,6 +107,7 @@ export interface ProjectMemory {
 export function createEmptyMemory(workspaceRoot: string, projectName: string): ProjectMemory {
   return {
     project: { name: projectName, description: '', goals: [], version: '' },
+    workspaceRoots: [workspaceRoot],
     stack: { frontend: '', backend: '', database: '', auth: '', devOps: '', other: [] },
     structure: { rootFolders: [], mainEntryPoints: [], totalFiles: 0, analyzedFiles: 0 },
     dependencies: { production: {}, development: {}, frameworks: [] },
@@ -133,6 +135,8 @@ export function createEmptyMemory(workspaceRoot: string, projectName: string): P
 
 export class MemoryManager {
   private memory: ProjectMemory | null = null;
+  private previousMemorySnapshot: ProjectMemory | null = null;
+  private lastDiffLines: string[] = [];
   private memoryPath: string;
   private workspaceRoot: string;
 
@@ -142,6 +146,83 @@ export class MemoryManager {
   constructor(workspaceRoot: string) {
     this.workspaceRoot = workspaceRoot;
     this.memoryPath = path.join(workspaceRoot, MEMORY_DIR, MEMORY_FILE);
+  }
+
+  /** Snapshot current memory before generate/update run */
+  public snapshot(): void {
+    if (this.memory) {
+      this.previousMemorySnapshot = JSON.parse(JSON.stringify(this.memory));
+    }
+  }
+
+  /** Compute human-readable diff lines between snapshot and current memory */
+  public computeDiff(): string[] {
+    const diff: string[] = [];
+    if (!this.previousMemorySnapshot || !this.memory) {
+      this.lastDiffLines = ['⚡ Fresh project context created.'];
+      return this.lastDiffLines;
+    }
+
+    const prev = this.previousMemorySnapshot;
+    const curr = this.memory;
+
+    // Files diff
+    const prevFileMap = new Map(prev.files.map(f => [f.path, f]));
+    const currFileMap = new Map(curr.files.map(f => [f.path, f]));
+
+    for (const [path] of currFileMap) {
+      if (!prevFileMap.has(path)) {
+        diff.push(`➕ Added new file: ${path}`);
+      }
+    }
+    for (const [path] of prevFileMap) {
+      if (!currFileMap.has(path)) {
+        diff.push(`➖ Removed file: ${path}`);
+      }
+    }
+
+    // Features diff
+    const newlyCompleted = curr.features.completed.filter(f => !prev.features.completed.includes(f));
+    for (const feat of newlyCompleted) {
+      diff.push(`✅ Feature completed: "${feat}"`);
+    }
+
+    const newlyPending = curr.features.pending.filter(f => !prev.features.pending.includes(f));
+    for (const feat of newlyPending) {
+      diff.push(`➕ Feature pending: "${feat}"`);
+    }
+
+    // Bugs diff
+    const newBugs = curr.bugs.filter(b => !prev.bugs.includes(b));
+    for (const bug of newBugs) {
+      diff.push(`🐛 New bug logged: "${bug}"`);
+    }
+
+    // Token savings change
+    const prevSavings = prev.meta.tokenEstimate.savedPercent || 0;
+    const currSavings = curr.meta.tokenEstimate.savedPercent || 0;
+    if (prevSavings !== currSavings) {
+      diff.push(`⚡ Token savings changed: ${prevSavings}% → ${currSavings}%`);
+    }
+
+    // New API Endpoints
+    const prevEpKeys = new Set(prev.api.endpoints.map(e => `${e.method} ${e.path}`));
+    for (const ep of curr.api.endpoints) {
+      if (!prevEpKeys.has(`${ep.method} ${ep.path}`)) {
+        diff.push(`➕ API Endpoint detected: ${ep.method} ${ep.path}`);
+      }
+    }
+
+    if (diff.length === 0) {
+      diff.push('ℹ️ No major context changes detected.');
+    }
+
+    this.lastDiffLines = diff;
+    return diff;
+  }
+
+  public getLastDiff(): string[] {
+    return this.lastDiffLines;
   }
 
   /** Load memory from disk, or create a fresh one */

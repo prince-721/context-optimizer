@@ -6,28 +6,36 @@
   "publisher": "context-optimizer",
   "repository": {
     "type": "git",
-    "url": "https://github.com/username/context-optimizer"
+    "url": "https://github.com/context-optimizer/context-optimizer"
   },
+  "bugs": {
+    "url": "https://github.com/context-optimizer/context-optimizer/issues"
+  },
+  "homepage": "https://github.com/context-optimizer/context-optimizer#readme",
   "license": "MIT",
   "icon": "media/icon.png",
+  "galleryBanner": {
+    "color": "#0d1117",
+    "theme": "dark"
+  },
   "engines": {
     "vscode": "^1.85.0"
   },
   "categories": [
-    "AI",
     "Other",
-    "Programming Languages"
+    "Machine Learning",
+    "Snippets"
   ],
   "keywords": [
     "ai",
     "context",
     "tokens",
-    "memory",
-    "compression",
     "chatgpt",
     "claude",
-    "gemini",
     "copilot",
+    "prompt",
+    "memory",
+    "compression",
     "productivity"
   ],
   "activationEvents": [
@@ -53,6 +61,12 @@
           "contextualTitle": "Context Optimizer"
         },
         {
+          "id": "contextOptimizer.decisionChat",
+          "name": "Decision Log",
+          "icon": "$(comment-discussion)",
+          "contextualTitle": "Context Optimizer"
+        },
+        {
           "id": "contextOptimizer.filesView",
           "name": "Key Files",
           "icon": "$(files)",
@@ -62,6 +76,12 @@
           "id": "contextOptimizer.statsView",
           "name": "Token Savings",
           "icon": "$(graph)",
+          "contextualTitle": "Context Optimizer"
+        },
+        {
+          "id": "contextOptimizer.graphsView",
+          "name": "Codebase Visualizer",
+          "icon": "$(eye)",
           "contextualTitle": "Context Optimizer"
         }
       ]
@@ -78,6 +98,24 @@
         "title": "Update Context",
         "category": "Context Optimizer",
         "icon": "$(sync)"
+      },
+      {
+        "command": "contextOptimizer.showDiff",
+        "title": "Show What Changed (Memory Diff)",
+        "category": "Context Optimizer",
+        "icon": "$(diff)"
+      },
+      {
+        "command": "contextOptimizer.showWelcome",
+        "title": "Show Welcome Walkthrough",
+        "category": "Context Optimizer",
+        "icon": "$(info)"
+      },
+      {
+        "command": "contextOptimizer.importChat",
+        "title": "Import AI Chat Conversation",
+        "category": "Context Optimizer",
+        "icon": "$(sign-in)"
       },
       {
         "command": "contextOptimizer.exportPrompt",
@@ -114,6 +152,18 @@
         "title": "Open Dashboard",
         "category": "Context Optimizer",
         "icon": "$(dashboard)"
+      },
+      {
+        "command": "contextOptimizer.openInteractiveGraph",
+        "title": "Open Interactive Codebase Graph",
+        "category": "Context Optimizer",
+        "icon": "$(graph)"
+      },
+      {
+        "command": "contextOptimizer.openMermaidGraph",
+        "title": "Open Codebase Visual Graph (Flowchart)",
+        "category": "Context Optimizer",
+        "icon": "$(graph)"
       },
       {
         "command": "contextOptimizer.resetMemory",
@@ -171,19 +221,29 @@
           "group": "navigation@2"
         },
         {
-          "command": "contextOptimizer.refresh",
+          "command": "contextOptimizer.showDiff",
           "when": "view == contextOptimizer.summaryView",
           "group": "navigation@3"
         },
         {
-          "command": "contextOptimizer.openDashboard",
+          "command": "contextOptimizer.refresh",
           "when": "view == contextOptimizer.summaryView",
           "group": "navigation@4"
         },
         {
-          "command": "contextOptimizer.exportGraph",
+          "command": "contextOptimizer.openDashboard",
           "when": "view == contextOptimizer.summaryView",
           "group": "navigation@5"
+        },
+        {
+          "command": "contextOptimizer.openInteractiveGraph",
+          "when": "view == contextOptimizer.summaryView",
+          "group": "navigation@6"
+        },
+        {
+          "command": "contextOptimizer.exportGraph",
+          "when": "view == contextOptimizer.summaryView",
+          "group": "navigation@7"
         },
         {
           "command": "contextOptimizer.exportPrompt",
@@ -194,25 +254,93 @@
           "command": "contextOptimizer.exportGraph",
           "when": "view == contextOptimizer.filesView",
           "group": "navigation@2"
+        },
+        {
+          "command": "contextOptimizer.openInteractiveGraph",
+          "when": "view == contextOptimizer.graphsView",
+          "group": "navigation@1"
+        },
+        {
+          "command": "contextOptimizer.openMermaidGraph",
+          "when": "view == contextOptimizer.graphsView",
+          "group": "navigation@2"
+        },
+        {
+          "command": "contextOptimizer.exportGraph",
+          "when": "view == contextOptimizer.graphsView",
+          "group": "navigation@3"
         }
       ],
       "commandPalette": [
-        { "command": "contextOptimizer.generateContext" },
-        { "command": "contextOptimizer.updateContext" },
-        { "command": "contextOptimizer.exportPrompt" },
-        { "command": "contextOptimizer.exportMarkdown" },
-        { "command": "contextOptimizer.exportJson" },
-        { "command": "contextOptimizer.exportGraph" },
-        { "command": "contextOptimizer.showTokenSavings" },
-        { "command": "contextOptimizer.openDashboard" },
-        { "command": "contextOptimizer.resetMemory" },
-        { "command": "contextOptimizer.addNote" },
-        { "command": "contextOptimizer.addRule" },
-        { "command": "contextOptimizer.detectDuplicates" },
-        { "command": "contextOptimizer.generateReadme" },
-        { "command": "contextOptimizer.generateAiArchitectureSummary" }
+        {
+          "command": "contextOptimizer.generateContext"
+        },
+        {
+          "command": "contextOptimizer.updateContext"
+        },
+        {
+          "command": "contextOptimizer.showDiff"
+        },
+        {
+          "command": "contextOptimizer.showWelcome"
+        },
+        {
+          "command": "contextOptimizer.importChat"
+        },
+        {
+          "command": "contextOptimizer.exportPrompt"
+        },
+        {
+          "command": "contextOptimizer.exportMarkdown"
+        },
+        {
+          "command": "contextOptimizer.exportJson"
+        },
+        {
+          "command": "contextOptimizer.exportGraph"
+        },
+        {
+          "command": "contextOptimizer.showTokenSavings"
+        },
+        {
+          "command": "contextOptimizer.openDashboard"
+        },
+        {
+          "command": "contextOptimizer.openInteractiveGraph"
+        },
+        {
+          "command": "contextOptimizer.openMermaidGraph"
+        },
+        {
+          "command": "contextOptimizer.resetMemory"
+        },
+        {
+          "command": "contextOptimizer.addNote"
+        },
+        {
+          "command": "contextOptimizer.addRule"
+        },
+        {
+          "command": "contextOptimizer.detectDuplicates"
+        },
+        {
+          "command": "contextOptimizer.generateReadme"
+        },
+        {
+          "command": "contextOptimizer.generateAiArchitectureSummary"
+        },
+        {
+          "command": "contextOptimizer.refresh"
+        }
       ]
     },
+    "keybindings": [
+      {
+        "command": "contextOptimizer.openInteractiveGraph",
+        "key": "ctrl+alt+g",
+        "mac": "cmd+alt+g"
+      }
+    ],
     "configuration": {
       "title": "Context Optimizer",
       "properties": {
@@ -239,18 +367,38 @@
         "contextOptimizer.ignorePatterns": {
           "type": "array",
           "default": [
-            "node_modules", "dist", "build", ".git", ".cache",
-            "*.log", "*.png", "*.jpg", "*.jpeg", "*.gif", "*.svg",
-            "*.mp4", "*.mp3", "*.webp", "coverage", ".nyc_output",
-            "__pycache__", "*.pyc", ".venv", "venv", "target",
-            ".next", ".nuxt", "out", "public/assets"
+            "node_modules",
+            "dist",
+            "build",
+            ".git",
+            ".cache",
+            "*.log",
+            "*.png",
+            "*.jpg",
+            "*.jpeg",
+            "*.gif",
+            "*.svg",
+            "*.mp4",
+            "*.mp3",
+            "*.webp",
+            "coverage",
+            ".nyc_output",
+            "__pycache__",
+            "*.pyc",
+            ".venv",
+            "venv",
+            "target",
+            ".next",
+            ".nuxt",
+            "out",
+            "public/assets"
           ],
           "description": "Glob patterns to ignore during project scanning."
         },
-        "contextOptimizer.useAiSummarization": {
+        "contextOptimizer.aiSummarization": {
           "type": "boolean",
-          "default": true,
-          "description": "Use Groq AI to generate high-quality code summaries instead of regex heuristics."
+          "default": false,
+          "description": "Use LLM (Groq) to generate high-quality one-sentence summaries for complex files (>50 lines)."
         },
         "contextOptimizer.groqApiKey": {
           "type": "string",
@@ -261,6 +409,16 @@
           "type": "string",
           "default": "llama-3.1-8b-instant",
           "description": "Groq model to use for file analysis and prompt optimization."
+        },
+        "contextOptimizer.tokenBudget": {
+          "type": "number",
+          "default": 4000,
+          "description": "Target token budget limit for AI prompt export (e.g. 2000, 4000, 8000)."
+        },
+        "contextOptimizer.autoRedactSecrets": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically redact API keys, secrets, and credentials before exporting context prompts."
         }
       }
     }
@@ -286,6 +444,7 @@
   "dependencies": {
     "gpt-tokenizer": "^2.1.2",
     "ignore": "^5.3.1",
-    "micromatch": "^4.0.5"
+    "micromatch": "^4.0.5",
+    "ts-morph": "^21.0.1"
   }
 }

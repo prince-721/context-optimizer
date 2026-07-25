@@ -1,9 +1,10 @@
 import * as path from 'path';
+import * as fs from 'fs';
 import { MemoryManager, FileRecord } from './MemoryManager';
-import { ProjectScanner, ScannedFile } from './ProjectScanner';
+import { ProjectScanner, ScannedFile, determinePriority, EXT_TO_LANGUAGE } from './ProjectScanner';
 import { FileAnalyzer } from './FileAnalyzer';
-import { readFileSafe, getExtension } from '../utils/fileUtils';
-import { sha256 } from '../utils/constants';
+import { readFileSafe, getExtension, isoDate } from '../utils/fileUtils';
+import { sha256, MAX_FILE_SIZE_BYTES } from '../utils/constants';
 import { logger } from '../utils/logger';
 
 export interface UpdateResult {
@@ -47,27 +48,69 @@ export class IncrementalUpdater {
       onProgress?.(i + 1, prioritized.length, path.basename(file.absolutePath));
 
       try {
-        const content = await readFileSafe(file.absolutePath);
-        if (!content) { result.skipped++; continue; }
+        let content = await readFileSafe(file.absolutePath);
+        let record: FileRecord;
 
-        const newHash = sha256(content);
-        const existing = this.memoryManager.getFileRecord(file.relativePath);
+        if (!content) {
+          // If the file is oversized or could not be read, we still record its metadata
+          // so it shows up in the codebase visual graph, but we skip analyzing its content.
+          const stat = fs.existsSync(file.absolutePath) ? fs.statSync(file.absolutePath) : null;
+          const fileSize = stat ? stat.size : (file.sizeBytes || 0);
 
-        if (existing && existing.hash === newHash) {
-          result.unchanged++;
-          continue;
+          if (fileSize > MAX_FILE_SIZE_BYTES) {
+            const ext = getExtension(file.absolutePath);
+            const relativePathString = file.relativePath;
+            const existing = this.memoryManager.getFileRecord(relativePathString);
+            const dummyHash = `oversized_${fileSize}_${stat ? stat.mtimeMs : Date.now()}`;
+
+            if (existing && existing.hash === dummyHash) {
+              result.unchanged++;
+              continue;
+            }
+
+            record = {
+              path: relativePathString,
+              priority: file.priority as FileRecord['priority'],
+              summary: `Oversized file (${(fileSize / (1024 * 1024)).toFixed(2)} MB). Full analysis skipped to save token context.`,
+              lastAnalyzed: isoDate(),
+              hash: dummyHash,
+              size: fileSize,
+              language: file.language,
+            };
+
+            if (existing) {
+              result.updated++;
+            } else {
+              result.added++;
+            }
+          } else {
+            result.skipped++;
+            continue;
+          }
+        } else {
+          const newHash = sha256(content);
+          const existing = this.memoryManager.getFileRecord(file.relativePath);
+
+          if (existing && existing.hash === newHash) {
+            result.unchanged++;
+            continue;
+          }
+
+          const analyzedRecord = await this.analyzer.analyzeFile(file);
+          if (!analyzedRecord) {
+            result.skipped++;
+            continue;
+          }
+          record = analyzedRecord;
+
+          if (existing) {
+            result.updated++;
+          } else {
+            result.added++;
+          }
         }
-
-        const record = await this.analyzer.analyzeFile(file);
-        if (!record) { result.skipped++; continue; }
 
         this.memoryManager.upsertFileRecord(record);
-
-        if (existing) {
-          result.updated++;
-        } else {
-          result.added++;
-        }
       } catch (err) {
         logger.warn(`IncrementalUpdater: Failed to process ${file.relativePath}`);
         result.skipped++;
@@ -93,6 +136,30 @@ export class IncrementalUpdater {
 
   /** Check if a single file has changed and update it if so */
   async updateSingleFile(absolutePath: string, relativePath: string): Promise<boolean> {
+    const stat = fs.existsSync(absolutePath) ? fs.statSync(absolutePath) : null;
+    const fileSize = stat ? stat.size : 0;
+
+    if (fileSize > MAX_FILE_SIZE_BYTES) {
+      const ext = getExtension(absolutePath);
+      const priority = determinePriority(relativePath, path.basename(absolutePath));
+      const dummyHash = `oversized_${fileSize}_${stat ? stat.mtimeMs : Date.now()}`;
+      const existing = this.memoryManager.getFileRecord(relativePath);
+
+      if (existing && existing.hash === dummyHash) return false;
+
+      const record: FileRecord = {
+        path: relativePath,
+        priority: priority as FileRecord['priority'],
+        summary: `Oversized file (${(fileSize / (1024 * 1024)).toFixed(2)} MB). Full analysis skipped to save token context.`,
+        lastAnalyzed: isoDate(),
+        hash: dummyHash,
+        size: fileSize,
+        language: EXT_TO_LANGUAGE[ext] ?? ext.toUpperCase() ?? 'Unknown',
+      };
+      this.memoryManager.upsertFileRecord(record);
+      return true;
+    }
+
     const content = await readFileSafe(absolutePath);
     if (!content) return false;
 

@@ -1,6 +1,6 @@
 import * as path from 'path';
 import * as fs from 'fs';
-import { MemoryManager } from '../core/MemoryManager';
+import { MemoryManager, ProjectMemory } from '../core/MemoryManager';
 import { TokenCounter } from '../core/TokenCounter';
 import { writeTextFile, readFileSafe, getWorkspaceRoot } from '../utils/fileUtils';
 
@@ -27,42 +27,59 @@ export class GraphExporter {
   }
 
   /**
-   * Generates a Mermaid.js markdown graph of the codebase
-   * showing token usage, priority classification, and recent changes.
+   * Generates a comprehensive markdown graph of the codebase
+   * with both a structured ASCII tree (universally readable) and
+   * an interactive Mermaid.js flowchart (for VS Code preview).
    */
-  async export(): Promise<string> {
-    const mem = this.memoryManager.get();
+  private async buildDirectoryTree(mem: ProjectMemory): Promise<{
+    rootDir: DirectoryNode;
+    fileNodes: FileNode[];
+    totalOriginalTokens: number;
+    totalFiles: number;
+    modifiedFiles: number;
+  }> {
     const workspaceRoot = getWorkspaceRoot() ?? mem.meta.workspaceRoot ?? '';
-    const outputPath = path.join(this.memoryManager.getExportsDir(), 'context_graph.md');
-
     const fileNodes: FileNode[] = [];
+    let totalOriginalTokens = 0;
+    let totalFiles = 0;
+    let modifiedFiles = 0;
     
-    // 1. Gather all file nodes with actual token counts and check modification state
-    for (const f of mem.files) {
-      const absolutePath = path.join(workspaceRoot, f.path);
-      let tokens = 0;
+    // 1. Gather all file nodes, filtering out build artifacts (.js.map and duplicate .js files in src)
+    const filePaths = new Set((mem.files || []).filter(f => f && f.path).map(f => f.path.replace(/\\/g, '/')));
+    
+    // Determine the workspace folder name so we can strip it from paths
+    const workspaceFolderName = path.basename(workspaceRoot);
+
+    for (const f of (mem.files || [])) {
+      if (!f || !f.path) continue;
+      let normalizedPath = f.path.replace(/\\/g, '/');
+
+      // Flatten: strip the redundant leading folder that matches the workspace root
+      if (workspaceFolderName && normalizedPath.startsWith(workspaceFolderName + '/')) {
+        normalizedPath = normalizedPath.substring(workspaceFolderName.length + 1);
+      }
+      
+      // Exclude source maps and compiled outputs that duplicate source typescript files
+      if (normalizedPath.endsWith('.js.map')) continue;
+      if (normalizedPath.endsWith('.js')) {
+        const tsPath = normalizedPath.slice(0, -3) + '.ts';
+        if (filePaths.has(tsPath)) continue;
+      }
+
+      let tokens = f.size ? Math.ceil(f.size / 4) : 0;
       let isModified = false;
 
-      try {
-        const content = await readFileSafe(absolutePath);
-        if (content) {
-          tokens = this.tokenCounter.count(content);
-        } else if (f.size) {
-          tokens = Math.ceil(f.size / 4); // fallback approximation
-        }
-
-        // Check if modified in the last 24 hours
-        if (fs.existsSync(absolutePath)) {
-          const stats = fs.statSync(absolutePath);
-          const now = Date.now();
-          const diffHours = (now - stats.mtime.getTime()) / (1000 * 60 * 60);
+      if (f.lastAnalyzed) {
+        try {
+          const mtime = new Date(f.lastAnalyzed).getTime();
+          const diffHours = (Date.now() - mtime) / (1000 * 60 * 60);
           isModified = diffHours <= 24;
-        }
-      } catch {
-        if (f.size) {
-          tokens = Math.ceil(f.size / 4);
-        }
+        } catch {}
       }
+
+      totalOriginalTokens += tokens;
+      totalFiles++;
+      if (isModified) { modifiedFiles++; }
 
       fileNodes.push({
         name: path.basename(f.path),
@@ -101,113 +118,274 @@ export class GraphExporter {
       current.files.push(f);
     }
 
-    // 3. Generate Mermaid diagram text
-    let mermaid = '```mermaid\nflowchart LR\n';
-    
-    // Add subgraphs and style definitions
-    const styles: string[] = [];
+    return { rootDir, fileNodes, totalOriginalTokens, totalFiles, modifiedFiles };
+  }
+
+  public generateMermaid(rootDir: DirectoryNode): string {
+    let mermaid = 'flowchart LR\n';
     const relations: string[] = [];
+    const classApplications: string[] = [];
 
     const getSafeId = (relPath: string): string => {
       if (!relPath) return 'root_node';
       return 'node_' + relPath.replace(/[^a-zA-Z0-9]/g, '_');
     };
 
-    const renderNode = (node: DirectoryNode, indent: string): string => {
+    let totalNodesCount = 0;
+    const MAX_MERMAID_NODES = 60; // Cap to prevent Mermaid size limit crash
+
+    const renderMermaidNode = (node: DirectoryNode, indent: string): string => {
       let out = '';
       const parentId = getSafeId(node.relativePath);
 
-      // Render subdirs
       for (const [name, subdir] of node.subdirs.entries()) {
+        if (totalNodesCount >= MAX_MERMAID_NODES) break;
+        totalNodesCount++;
+
         const subdirId = getSafeId(subdir.relativePath);
-        
-        out += `${indent}subgraph ${subdirId}_sub [" "]\n`;
-        out += `${indent}  ${subdirId}["📂 ${name}"]\n`;
-        out += renderNode(subdir, indent + '  ');
-        out += `${indent}end\n`;
-
-        // Link parent to child directory (outside of subgraph block to compile correctly)
+        out += `${indent}${subdirId}["📂 ${name}"]\n`;
         relations.push(`  ${parentId} --> ${subdirId}`);
-
-        // Add folder styling
-        styles.push(`  style ${subdirId} fill:#eff6ff,stroke:#2563eb,stroke-width:1.5px,color:#1d4ed8`);
-        // Add subgraph container styling (dashed border with clean white/gray background)
-        styles.push(`  style ${subdirId}_sub fill:#fafafa,stroke:#e2e8f0,stroke-width:1px,stroke-dasharray:3 3`);
+        classApplications.push(`  class ${subdirId} folderNode;`);
+        out += renderMermaidNode(subdir, indent);
       }
 
-      // Render files
       for (const f of node.files) {
+        if (totalNodesCount >= MAX_MERMAID_NODES) break;
+        totalNodesCount++;
+
         const fileId = getSafeId(f.relativePath);
-        const changeLabel = f.isModified ? ' 🔥 [NEW/MOD]' : '';
-        const nodeLabel = `${f.name}\\n(${f.tokenCount} tokens)${changeLabel}`;
-
+        const changeLabel = f.isModified ? ' 🔥' : '';
+        const cleanName = f.name.replace(/["'<>]/g, '');
+        const nodeLabel = `${cleanName} (${f.tokenCount}t)${changeLabel}`;
         out += `${indent}${fileId}["📄 ${nodeLabel}"]\n`;
-
-        // Link folder to file
         relations.push(`  ${parentId} --> ${fileId}`);
 
-        // Add priority color styles
         if (f.isModified) {
-          styles.push(`  style ${fileId} fill:#fef2f2,stroke:#ef4444,stroke-width:2.5px,color:#991b1b`);
+          classApplications.push(`  class ${fileId} modifiedNode;`);
         } else if (f.priority === 'critical') {
-          styles.push(`  style ${fileId} fill:#fff1f2,stroke:#f43f5e,stroke-width:2px,color:#9f1239`);
+          classApplications.push(`  class ${fileId} criticalNode;`);
         } else if (f.priority === 'high') {
-          styles.push(`  style ${fileId} fill:#fff7ed,stroke:#f97316,stroke-width:1.5px,color:#9a3412`);
+          classApplications.push(`  class ${fileId} highNode;`);
         } else if (f.priority === 'medium') {
-          styles.push(`  style ${fileId} fill:#fefce8,stroke:#ca8a04,stroke-width:1px,color:#854d0e`);
+          classApplications.push(`  class ${fileId} mediumNode;`);
         } else {
-          styles.push(`  style ${fileId} fill:#f8fafc,stroke:#64748b,stroke-width:1px,color:#334155`);
+          classApplications.push(`  class ${fileId} lowNode;`);
         }
       }
-
       return out;
     };
 
-    // Render root folder node
     const rootId = getSafeId(rootDir.relativePath);
     mermaid += `  ${rootId}["🏠 ${rootDir.name}"]\n`;
-    styles.push(`  style ${rootId} fill:#faf5ff,stroke:#a855f7,stroke-width:2.5px,color:#6b21a8`);
-
-    mermaid += renderNode(rootDir, '  ');
+    classApplications.push(`  class ${rootId} rootNode;`);
     
-    // Add relationships
+    mermaid += renderMermaidNode(rootDir, '  ');
     mermaid += '\n  %% Directory Relationships\n';
     mermaid += relations.join('\n') + '\n';
+    
+    mermaid += '\n  %% Style Class Definitions\n';
+    mermaid += '  classDef rootNode fill:#2d1b4e,stroke:#a855f7,stroke-width:2.5px,color:#f3e8ff;\n';
+    mermaid += '  classDef folderNode fill:#1e293b,stroke:#3b82f6,stroke-width:1.5px,color:#eff6ff;\n';
+    mermaid += '  classDef criticalNode fill:#3b1313,stroke:#f43f5e,stroke-width:2px,color:#ffe4e6;\n';
+    mermaid += '  classDef highNode fill:#3b2313,stroke:#f97316,stroke-width:1.5px,color:#ffedd5;\n';
+    mermaid += '  classDef mediumNode fill:#143b13,stroke:#22c55e,stroke-width:1px,color:#dcfce7;\n';
+    mermaid += '  classDef lowNode fill:#1e293b,stroke:#64748b,stroke-width:1px,color:#f1f5f9;\n';
+    mermaid += '  classDef modifiedNode fill:#3b132c,stroke:#ef4444,stroke-width:2.5px,color:#fce7f3;\n';
 
-    // Add style applications
-    mermaid += '\n  %% Priority Nodes Styles\n';
-    mermaid += styles.join('\n') + '\n';
-
-    // Add Link Styles
+    mermaid += '\n  %% Class Applications\n';
+    mermaid += classApplications.join('\n') + '\n';
     mermaid += '\n  %% Link Styles\n';
-    mermaid += '  linkStyle default stroke:#64748b,stroke-width:1px,fill:none\n';
-    mermaid += '```\n';
+    mermaid += '  linkStyle default stroke:#475569,stroke-width:1.2px,fill:none\n';
+    return mermaid;
+  }
 
-    // 4. Assemble full markdown file content
+  async getMermaidDiagram(): Promise<string> {
+    const mem = this.memoryManager.get();
+    const { rootDir } = await this.buildDirectoryTree(mem);
+    return this.generateMermaid(rootDir);
+  }
+
+  /**
+   * Generates a comprehensive markdown graph of the codebase
+   * with both a structured ASCII tree (universally readable) and
+   * an interactive Mermaid.js flowchart (for VS Code preview).
+   */
+  async export(): Promise<string> {
+    const mem = this.memoryManager.get();
+    const workspaceRoot = getWorkspaceRoot() ?? mem.meta.workspaceRoot ?? '';
+    const outputPath = path.join(this.memoryManager.getExportsDir(), 'context_graph.md');
+
+    const { rootDir, fileNodes, totalOriginalTokens, totalFiles, modifiedFiles } = await this.buildDirectoryTree(mem);
+
+    // ═══════════════════════════════════════════════════════════
+    // SECTION A: Structured ASCII Tree (renders everywhere)
+    // ═══════════════════════════════════════════════════════════
+
+    const getPriorityBadge = (priority: string, isModified: boolean): string => {
+      if (isModified) return '🔥 Modified';
+      switch (priority) {
+        case 'critical': return '🔴 Critical';
+        case 'high': return '🟠 High';
+        case 'medium': return '🟡 Medium';
+        default: return '⚪ Low';
+      }
+    };
+
+    const padRight = (str: string, len: number): string => {
+      const visLen = [...str].length;
+      return str + ' '.repeat(Math.max(0, len - visLen));
+    };
+
+    const renderAsciiTree = (node: DirectoryNode, prefix: string, isLast: boolean): string => {
+      let out = '';
+      const children: Array<{ type: 'dir' | 'file'; name: string; node?: DirectoryNode; file?: FileNode }> = [];
+
+      for (const [name, subdir] of node.subdirs.entries()) {
+        children.push({ type: 'dir', name, node: subdir });
+      }
+      for (const f of node.files) {
+        children.push({ type: 'file', name: f.name, file: f });
+      }
+
+      for (let i = 0; i < children.length; i++) {
+        const child = children[i];
+        const childIsLast = (i === children.length - 1);
+        const connector = childIsLast ? '└── ' : '├── ';
+        const nextPrefix = prefix + (childIsLast ? '    ' : '│   ');
+
+        if (child.type === 'dir' && child.node) {
+          const subdirFiles = this.countFilesInDir(child.node);
+          const subdirTokens = this.countTokensInDir(child.node);
+          out += `${prefix}${connector}📂 ${child.name}/ (${subdirFiles} files, ${subdirTokens.toLocaleString()} tokens)\n`;
+          out += renderAsciiTree(child.node, nextPrefix, childIsLast);
+        } else if (child.type === 'file' && child.file) {
+          const f = child.file;
+          const badge = getPriorityBadge(f.priority, f.isModified);
+          const modTag = f.isModified ? ' 🔥' : '';
+          out += `${prefix}${connector}📄 ${padRight(f.name, 30)} ${padRight(f.tokenCount.toLocaleString() + ' tokens', 14)} [${badge}]${modTag}\n`;
+        }
+      }
+      return out;
+    };
+
+    const asciiTree = `🏠 ${rootDir.name}/\n` + renderAsciiTree(rootDir, '', true);
+
+    // ═══════════════════════════════════════════════════════════
+    // SECTION B: Summary Statistics
+    // ═══════════════════════════════════════════════════════════
+
+    const criticalCount = fileNodes.filter(f => f.priority === 'critical').length;
+    const highCount = fileNodes.filter(f => f.priority === 'high').length;
+    const mediumCount = fileNodes.filter(f => f.priority === 'medium').length;
+    const lowCount = fileNodes.filter(f => f.priority === 'low').length;
+
+    const statsTable = `| Metric | Value |
+|:---|:---|
+| **Total Files Tracked** | ${totalFiles} |
+| **Total Original Tokens** | ${totalOriginalTokens.toLocaleString()} |
+| **Files Modified (last 24h)** | ${modifiedFiles} |
+| 🔴 Critical Priority | ${criticalCount} files |
+| 🟠 High Priority | ${highCount} files |
+| 🟡 Medium Priority | ${mediumCount} files |
+| ⚪ Low Priority | ${lowCount} files |`;
+
+    // ═══════════════════════════════════════════════════════════
+    // SECTION C: Priority File Table
+    // ═══════════════════════════════════════════════════════════
+
+    const sortedFiles = [...fileNodes].sort((a, b) => {
+      const priorityOrder: Record<string, number> = { critical: 0, high: 1, medium: 2, low: 3 };
+      const pa = priorityOrder[a.priority] ?? 4;
+      const pb = priorityOrder[b.priority] ?? 4;
+      if (pa !== pb) return pa - pb;
+      return b.tokenCount - a.tokenCount;
+    });
+
+    let fileTable = `| File | Directory | Tokens | Priority | Modified |\n|:---|:---|---:|:---|:---|\n`;
+    for (const f of sortedFiles) {
+      const dir = path.dirname(f.relativePath) || '.';
+      const badge = getPriorityBadge(f.priority, false);
+      const mod = f.isModified ? '🔥 Yes' : '—';
+      fileTable += `| 📄 ${f.name} | \`${dir}\` | ${f.tokenCount.toLocaleString()} | ${badge} | ${mod} |\n`;
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    // SECTION D: Mermaid Flowchart (for VS Code preview)
+    // ═══════════════════════════════════════════════════════════
+
+    const mermaid = '```mermaid\n' + this.generateMermaid(rootDir) + '```\n';
+
+    // ═══════════════════════════════════════════════════════════
+    // ASSEMBLE FINAL MARKDOWN
+    // ═══════════════════════════════════════════════════════════
+
     const markdownContent = `# 📊 Codebase Visual Context Graph
 
-This report provides a visual overview of your project structure, token sizes, file priorities, and recent changes.
-
-> [!TIP]
-> Press **Ctrl+Shift+V** (or **Cmd+Shift+V** on macOS) in VS Code to open the Markdown Preview and view this diagram interactively.
-
-## 🎨 Legend
-* 🏠 **Purple Node**: Root workspace folder.
-* 📂 **Sub-borders**: Directory nesting boundaries.
-* 🔴 **Red Nodes**: Critical files (manifests, configs, schemas).
-* 🟠 **Orange Nodes**: High priority files (APIs, routes, entry points).
-* 🟡 **Yellow Nodes**: Medium priority files (modules, helper classes, models).
-* ⚪ **Gray Nodes**: Low priority files (tests, local utilities, styling).
-* 🔥 **[NEW/MOD] Tag**: Files modified or added within the last 24 hours.
+> Generated by **Context Optimizer** — Token-optimized AI context for your codebase.
 
 ---
 
-## 📈 Visual Project Flow
+## 📈 Project Summary
+
+${statsTable}
+
+---
+
+## 🎨 Legend
+
+| Symbol | Meaning |
+|:---|:---|
+| 🏠 | Root workspace folder |
+| 📂 | Directory (folder) |
+| 📄 | Source file |
+| 🔴 Critical | Manifests, configs, schemas — always include in AI context |
+| 🟠 High | Entry points, API routes, important modules |
+| 🟡 Medium | Helper classes, utilities, models |
+| ⚪ Low | Tests, generated files, styling |
+| 🔥 Modified | Changed within the last 24 hours |
+
+---
+
+## 🌳 Structured Directory Tree
+
+\`\`\`text
+${asciiTree}\`\`\`
+
+---
+
+## 📋 All Files by Priority
+
+${fileTable}
+
+---
+
+## 🔮 Interactive Flowchart (VS Code Markdown Preview)
+
+> [!TIP]
+> Press **Ctrl+Shift+V** (or **Cmd+Shift+V** on macOS) in VS Code to render this Mermaid diagram interactively.
 
 ${mermaid}
 `;
 
     writeTextFile(outputPath, markdownContent);
     return outputPath;
+  }
+
+  /** Count total files recursively in a directory node */
+  private countFilesInDir(node: DirectoryNode): number {
+    let count = node.files.length;
+    for (const subdir of node.subdirs.values()) {
+      count += this.countFilesInDir(subdir);
+    }
+    return count;
+  }
+
+  /** Count total tokens recursively in a directory node */
+  private countTokensInDir(node: DirectoryNode): number {
+    let total = node.files.reduce((sum, f) => sum + f.tokenCount, 0);
+    for (const subdir of node.subdirs.values()) {
+      total += this.countTokensInDir(subdir);
+    }
+    return total;
   }
 }

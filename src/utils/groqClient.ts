@@ -6,13 +6,15 @@ import * as vscode from 'vscode';
  */
 export async function callGroqChatCompletion(
   systemPrompt: string,
-  userPrompt: string
+  userPrompt: string,
+  secretApiKey?: string
 ): Promise<string> {
   const config = vscode.workspace.getConfiguration('contextOptimizer');
-  let apiKey = config.get<string>('groqApiKey')?.trim();
+  let apiKey = secretApiKey?.trim() || config.get<string>('groqApiKey')?.trim();
 
+  // No hardcoded key — user must configure their Groq API key in extension settings
   if (!apiKey) {
-    throw new Error('Groq API Key is not configured. Please set your Groq API Key (contextOptimizer.groqApiKey) in VS Code Settings.');
+    throw new Error('No Groq API key configured. Please set your key in: Settings → Extensions → Context Optimizer → Groq API Key');
   }
 
   const model = config.get<string>('groqModel') || 'llama-3.1-8b-instant';

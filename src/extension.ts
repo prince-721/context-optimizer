@@ -19,9 +19,12 @@ import { SchemaAnalyzer } from './analyzers/SchemaAnalyzer';
 import { DuplicateDetector } from './analyzers/DuplicateDetector';
 import { ReadmeGenerator } from './analyzers/ReadmeGenerator';
 
-// Providers
-import { SummaryTreeProvider, FilesTreeProvider, StatsTreeProvider } from './providers/ContextTreeProvider';
+// Providers & Webviews
+import { SummaryTreeProvider, FilesTreeProvider, StatsTreeProvider, GraphsTreeProvider } from './providers/ContextTreeProvider';
 import { DashboardPanel } from './providers/DashboardPanel';
+import { InteractiveGraphPanel } from './providers/InteractiveGraphPanel';
+import { DecisionChatProvider } from './webview/DecisionChatPanel';
+import { OnboardingPanel } from './webview/OnboardingPanel';
 
 // Exporters
 import { MarkdownExporter } from './exporters/MarkdownExporter';
@@ -31,7 +34,7 @@ import { GraphExporter } from './exporters/GraphExporter';
 
 // Utils
 import { logger } from './utils/logger';
-import { getWorkspaceRoot, ensureDir } from './utils/fileUtils';
+import { getWorkspaceRoot } from './utils/fileUtils';
 import { callGroqChatCompletion } from './utils/groqClient';
 
 // ─── Extension State ──────────────────────────────────────────────────────────
@@ -48,9 +51,11 @@ let summaryProvider: SummaryTreeProvider | undefined;
 let filesProvider: FilesTreeProvider | undefined;
 let statsProvider: StatsTreeProvider | undefined;
 
+let outputChannel: vscode.OutputChannel | undefined;
+
 // ─── Activation ───────────────────────────────────────────────────────────────
 
-export function activate(context: vscode.ExtensionContext): void {
+export async function activate(context: vscode.ExtensionContext): Promise<void> {
   logger.info('Context Optimizer activating...');
 
   const workspaceRoot = getWorkspaceRoot();
@@ -59,6 +64,11 @@ export function activate(context: vscode.ExtensionContext): void {
     return;
   }
 
+  outputChannel = vscode.window.createOutputChannel('Context Optimizer — What Changed');
+
+  // Load secret API key if set in VS Code Secret Storage (Upgrade 5)
+  const secretGroqKey = await context.secrets.get('contextOptimizer.groqApiKey');
+
   // ─── Initialize core services ─────────────────────────────────────────────
 
   const config = vscode.workspace.getConfiguration('contextOptimizer');
@@ -66,35 +76,161 @@ export function activate(context: vscode.ExtensionContext): void {
 
   memoryManager = new MemoryManager(workspaceRoot);
   scanner = new ProjectScanner(workspaceRoot, ignorePatterns);
-  analyzer = new FileAnalyzer();
+  analyzer = new FileAnalyzer(secretGroqKey);
   compressor = new ContextCompressor();
   tokenCounter = new TokenCounter();
   gitWatcher = new GitWatcher(workspaceRoot);
   updater = new IncrementalUpdater(memoryManager, scanner, analyzer);
 
   // Load existing memory
-  memoryManager.load();
+  const mem = memoryManager.load();
 
-  // ─── Register Tree Views ───────────────────────────────────────────────────
+  // Auto-analyze dependencies & stack on startup if stack or features are missing
+  if (!mem.stack.frontend || mem.features.completed.length === 0) {
+    new DependencyAnalyzer(workspaceRoot).analyze().then((partial) => {
+      if (partial.stack) Object.assign(mem.stack, partial.stack);
+      if (partial.dependencies) Object.assign(mem.dependencies, partial.dependencies);
+      if (partial.features) Object.assign(mem.features, partial.features);
+      memoryManager!.save();
+      summaryProvider?.refresh();
+    }).catch(() => {});
+  }
+
+  // ─── Register Sidebar Tree Views & Webview Providers ────────────────────────
 
   summaryProvider = new SummaryTreeProvider(memoryManager);
   filesProvider = new FilesTreeProvider(memoryManager);
   statsProvider = new StatsTreeProvider(memoryManager);
+  const graphsProvider = new GraphsTreeProvider(memoryManager);
+  const decisionChatProvider = new DecisionChatProvider(context.extensionUri, memoryManager);
 
   context.subscriptions.push(
     vscode.window.registerTreeDataProvider('contextOptimizer.summaryView', summaryProvider),
     vscode.window.registerTreeDataProvider('contextOptimizer.filesView', filesProvider),
     vscode.window.registerTreeDataProvider('contextOptimizer.statsView', statsProvider),
+    vscode.window.registerTreeDataProvider('contextOptimizer.graphsView', graphsProvider),
+    vscode.window.registerWebviewViewProvider(DecisionChatProvider.viewId, decisionChatProvider)
   );
+
+  // ─── Upgrade 4: Onboarding Flow Check ─────────────────────────────────────
+  const hasOnboarded = context.globalState.get<boolean>('contextOptimizer.hasOnboarded');
+  if (!hasOnboarded) {
+    vscode.window.showInformationMessage(
+      '👋 Context Optimizer installed! It compresses your project into a 2,000-token AI prompt. Generate your first context?',
+      'Generate Now', 'Show Me How'
+    ).then(async (action) => {
+      await context.globalState.update('contextOptimizer.hasOnboarded', true);
+      if (action === 'Generate Now') {
+        vscode.commands.executeCommand('contextOptimizer.generateContext');
+      } else if (action === 'Show Me How') {
+        OnboardingPanel.createOrShow(context.extensionUri);
+      }
+    });
+  }
 
   // ─── Register Commands ─────────────────────────────────────────────────────
 
   context.subscriptions.push(
 
+    // Upgrade 4: Show Welcome Walkthrough
+    vscode.commands.registerCommand('contextOptimizer.showWelcome', () => {
+      OnboardingPanel.createOrShow(context.extensionUri);
+    }),
+
+    // Upgrade 3: Show Memory Diff Output Channel
+    vscode.commands.registerCommand('contextOptimizer.showDiff', () => {
+      if (!memoryManager) return;
+      const diffLines = memoryManager.getLastDiff();
+      outputChannel?.clear();
+      outputChannel?.appendLine(`=== Context Optimizer — What Changed (${new Date().toLocaleString()}) ===\n`);
+      for (const line of diffLines) {
+        outputChannel?.appendLine(line);
+      }
+      outputChannel?.show(true);
+    }),
+
+    // Upgrade 8: Conversation Compression (Import AI Chat)
+    vscode.commands.registerCommand('contextOptimizer.importChat', async () => {
+      const activeEditor = vscode.window.activeTextEditor;
+      let textToImport = '';
+
+      if (activeEditor && activeEditor.document.getText().trim().length > 50) {
+        textToImport = activeEditor.document.getText();
+      } else {
+        const doc = await vscode.workspace.openTextDocument({
+          language: 'markdown',
+          content: `<!-- Paste your AI chat conversation below, then run "Context Optimizer: Import AI Chat Conversation" to parse! -->\n\n`
+        });
+        await vscode.window.showTextDocument(doc);
+        vscode.window.showInformationMessage('Paste your AI conversation in the newly opened tab, then run "Import AI Chat Conversation" again.');
+        return;
+      }
+
+      // Scan lines and classify
+      const lines = textToImport.split(/\r?\n/).map(l => l.trim()).filter(l => l.length > 20 && !l.startsWith('<!--'));
+      const classified: { type: string; content: string }[] = [];
+
+      for (const line of lines) {
+        const type = decisionChatProvider.classifyText(line);
+        if (type !== 'note') {
+          classified.push({ type, content: line });
+        }
+      }
+
+      if (classified.length === 0) {
+        vscode.window.showWarningMessage('No decision or action keywords found in the active editor text.');
+        return;
+      }
+
+      const decisionsCount = classified.filter(c => c.type === 'decision').length;
+      const completedCount = classified.filter(c => c.type === 'completed').length;
+      const todoCount = classified.filter(c => c.type === 'todo').length;
+      const bugCount = classified.filter(c => c.type === 'bugfix').length;
+
+      const confirm = await vscode.window.showInformationMessage(
+        `Found ${decisionsCount} decisions, ${completedCount} completed features, ${todoCount} pending tasks, and ${bugCount} bugs. Import to memory?`,
+        'Yes', 'No'
+      );
+
+      if (confirm === 'Yes') {
+        const mem = memoryManager!.get();
+        let importedCount = 0;
+
+        for (const item of classified) {
+          // Deduplicate by first 40 characters similarity
+          const prefix = item.content.slice(0, 40).toLowerCase();
+          const exists = mem.conversations.some(c => c.content.slice(0, 40).toLowerCase() === prefix);
+
+          if (!exists) {
+            mem.conversations.unshift({
+              date: new Date().toISOString(),
+              type: item.type as any,
+              content: item.content
+            });
+            importedCount++;
+
+            if (item.type === 'completed' && !mem.features.completed.includes(item.content)) {
+              mem.features.completed.unshift(item.content);
+            } else if (item.type === 'todo' && !mem.features.pending.includes(item.content)) {
+              mem.features.pending.unshift(item.content);
+            } else if (item.type === 'bugfix' && !mem.bugs.includes(item.content)) {
+              mem.bugs.push(item.content);
+            }
+          }
+        }
+
+        memoryManager!.save();
+        summaryProvider?.refresh();
+        vscode.window.showInformationMessage(`✅ Successfully imported ${importedCount} entries into project memory!`);
+      }
+    }),
+
     // 1. Generate Context — full analysis from scratch
     vscode.commands.registerCommand('contextOptimizer.generateContext', async () => {
       await runWithProgress('Generating Project Context...', async (progress) => {
         try {
+          memoryManager!.snapshot(); // Upgrade 3: Snapshot previous state
+
           progress.report({ message: 'Scanning workspace...', increment: 5 });
 
           // Run all analyzers in parallel
@@ -105,7 +241,7 @@ export function activate(context: vscode.ExtensionContext): void {
             new SchemaAnalyzer(workspaceRoot).analyze(),
           ]);
 
-          progress.report({ message: 'Analyzing files...', increment: 20 });
+          progress.report({ message: 'Analyzing files with AST...', increment: 20 });
 
           // Merge dependency analysis
           const mem = memoryManager!.get();
@@ -114,6 +250,7 @@ export function activate(context: vscode.ExtensionContext): void {
           if (depResult.project?.description) mem.project.description = depResult.project.description;
           if (depResult.stack) Object.assign(mem.stack, depResult.stack);
           if (depResult.dependencies) Object.assign(mem.dependencies, depResult.dependencies);
+          if (depResult.features) Object.assign(mem.features, depResult.features);
 
           // Merge API, env, schema
           mem.api.endpoints = apiEndpoints;
@@ -158,11 +295,15 @@ export function activate(context: vscode.ExtensionContext): void {
 
           memoryManager!.save();
 
+          // Upgrade 3: Compute diff & show notification
+          const diffLines = memoryManager!.computeDiff();
+
           progress.report({ message: 'Done!', increment: 5 });
 
           const msg = `✅ Context generated!\n+${updateResult.added} new, ~${updateResult.updated} updated files\nTokens saved: ${stats.savedPercent}%`;
-          vscode.window.showInformationMessage(msg, 'Open Dashboard', 'Export Prompt')
+          vscode.window.showInformationMessage(msg, 'See Details', 'Open Dashboard', 'Export Prompt')
             .then(action => {
+              if (action === 'See Details') vscode.commands.executeCommand('contextOptimizer.showDiff');
               if (action === 'Open Dashboard') vscode.commands.executeCommand('contextOptimizer.openDashboard');
               if (action === 'Export Prompt') vscode.commands.executeCommand('contextOptimizer.exportPrompt');
             });
@@ -178,6 +319,8 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand('contextOptimizer.updateContext', async () => {
       await runWithProgress('Updating Context (incremental)...', async (progress) => {
         try {
+          memoryManager!.snapshot(); // Upgrade 3: Snapshot previous state
+
           progress.report({ message: 'Checking for changes...', increment: 10 });
           const result = await updater!.update((current, total, fileName) => {
             progress.report({ message: `${fileName} (${current}/${total})`, increment: 0 });
@@ -189,9 +332,18 @@ export function activate(context: vscode.ExtensionContext): void {
           const stats = tokenCounter!.compare(allContent, prompt);
           mem.meta.tokenEstimate = { original: stats.originalTokens, compressed: stats.compressedTokens, savedPercent: stats.savedPercent };
           memoryManager!.save();
+
+          // Upgrade 3: Compute diff
+          const diffLines = memoryManager!.computeDiff();
+
           vscode.window.showInformationMessage(
-            `Context updated: +${result.added} added, ~${result.updated} changed, =${result.unchanged} unchanged`
-          );
+            `Context updated: +${result.added} added, ~${result.updated} changed, =${result.unchanged} unchanged`,
+            'See Details'
+          ).then(action => {
+            if (action === 'See Details') {
+              vscode.commands.executeCommand('contextOptimizer.showDiff');
+            }
+          });
         } catch (err) {
           logger.error('Update Context failed', err);
           vscode.window.showErrorMessage(`Update failed: ${err instanceof Error ? err.message : String(err)}`);
@@ -308,6 +460,16 @@ export function activate(context: vscode.ExtensionContext): void {
     // 7. Open Dashboard
     vscode.commands.registerCommand('contextOptimizer.openDashboard', () => {
       DashboardPanel.create(context.extensionUri, memoryManager!);
+    }),
+
+    // 7.5. Open Interactive Codebase Graph (Force directed layout)
+    vscode.commands.registerCommand('contextOptimizer.openInteractiveGraph', () => {
+      InteractiveGraphPanel.create(context.extensionUri, memoryManager!, 'interactive');
+    }),
+
+    // 7.6. Open Mermaid codebase visual graph (Flowchart layout)
+    vscode.commands.registerCommand('contextOptimizer.openMermaidGraph', () => {
+      InteractiveGraphPanel.create(context.extensionUri, memoryManager!, 'mermaid');
     }),
 
     // 8. Reset Memory
@@ -500,7 +662,6 @@ export function activate(context: vscode.ExtensionContext): void {
       if (isDone) {
         detectedFeature = firstLine.replace(/^(feat|feature|add|implement|complete):\s*/i, '').trim();
         if (detectedFeature) {
-          // Remove from pending/inProgress if matches
           mem.features.pending = mem.features.pending.filter(f => f.toLowerCase() !== detectedFeature.toLowerCase());
           mem.features.inProgress = mem.features.inProgress.filter(f => f.toLowerCase() !== detectedFeature.toLowerCase());
           if (!mem.features.completed.includes(detectedFeature)) {
@@ -515,7 +676,6 @@ export function activate(context: vscode.ExtensionContext): void {
       if (isFix) {
         const fixName = firstLine.replace(/^(fix|bugfix|patch|resolve):\s*/i, '').trim();
         if (fixName) {
-          // Remove from bugs if matching
           mem.bugs = mem.bugs.filter(b => b.toLowerCase() !== fixName.toLowerCase() && !fixName.toLowerCase().includes(b.toLowerCase()));
           if (!mem.features.completed.includes(`Fix: ${fixName}`)) {
             mem.features.completed.unshift(`Fix: ${fixName}`);
@@ -530,9 +690,7 @@ export function activate(context: vscode.ExtensionContext): void {
         content: `Git commit: ${firstLine}`,
       });
 
-      // Save memory changes before updating context
       memoryManager!.save();
-
       await vscode.commands.executeCommand('contextOptimizer.updateContext');
     });
     gitWatcher.start();
@@ -571,21 +729,7 @@ export function activate(context: vscode.ExtensionContext): void {
     }
   });
 
-  // ─── Done ─────────────────────────────────────────────────────────────────
-
   logger.success('Context Optimizer activated! Run "Context Optimizer: Generate Context" to start.');
-
-  // Show welcome if first time
-  if (!memoryManager.exists()) {
-    vscode.window.showInformationMessage(
-      '🧠 Context Optimizer is ready! Generate your first project context?',
-      'Generate Now', 'Later'
-    ).then(action => {
-      if (action === 'Generate Now') {
-        vscode.commands.executeCommand('contextOptimizer.generateContext');
-      }
-    });
-  }
 }
 
 // ─── Deactivation ────────────────────────────────────────────────────────────
@@ -593,6 +737,7 @@ export function activate(context: vscode.ExtensionContext): void {
 export function deactivate(): void {
   gitWatcher?.dispose();
   memoryManager?.dispose();
+  outputChannel?.dispose();
   logger.info('Context Optimizer deactivated.');
   logger.dispose();
 }
@@ -655,7 +800,6 @@ ${filesSummary}`;
 
   const response = await callGroqChatCompletion(systemPrompt, userPrompt);
   
-  // Parse response
   let description = '';
   let architecture = '';
 
@@ -671,7 +815,6 @@ ${filesSummary}`;
       description = response.substring(descIdx + '---DESCRIPTION---'.length).trim();
     }
   } else {
-    // Fallback if formatting was ignored
     const parts = response.split('\n\n');
     description = parts[0]?.trim() || '';
     architecture = parts.slice(1).join('\n\n').trim();

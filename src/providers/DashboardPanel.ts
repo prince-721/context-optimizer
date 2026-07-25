@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
 import { MemoryManager, ProjectMemory } from '../core/MemoryManager';
+import { GraphExporter } from '../exporters/GraphExporter';
 
 export class DashboardPanel {
   private static currentPanel: DashboardPanel | undefined;
@@ -45,7 +46,7 @@ export class DashboardPanel {
     this.panel = panel;
 
     // Initial render
-    this.panel.webview.html = this.getHtml(memoryManager.get());
+    this.panel.webview.html = this.getHtml();
 
     // Listen to memory changes
     memoryManager.onDidChange(() => {
@@ -64,14 +65,30 @@ export class DashboardPanel {
     this.panel.onDidDispose(() => this.dispose(), undefined, this.disposables);
   }
 
-  public update(mem: ProjectMemory): void {
-    if (this.panel.visible) {
-      this.panel.webview.postMessage({ command: 'update', data: mem });
+  public async update(mem: ProjectMemory, force = false): Promise<void> {
+    if (this.panel.visible || force) {
+      try {
+        const exporter = new GraphExporter(this.memoryManager);
+        const mermaidCode = await exporter.getMermaidDiagram();
+        this.panel.webview.postMessage({
+          command: 'update',
+          data: { mem, mermaidCode }
+        });
+      } catch (err) {
+        console.error('Failed to generate mermaid diagram for dashboard update:', err);
+        this.panel.webview.postMessage({
+          command: 'update',
+          data: { mem, mermaidCode: '' }
+        });
+      }
     }
   }
 
   private handleMessage(message: { command: string; data?: unknown }): void {
     switch (message.command) {
+      case 'ready':
+        this.update(this.memoryManager.get(), true);
+        break;
       case 'generateContext':
         vscode.commands.executeCommand('contextOptimizer.generateContext');
         break;
@@ -93,21 +110,33 @@ export class DashboardPanel {
       case 'openMemory':
         vscode.commands.executeCommand('contextOptimizer.openMemoryFile');
         break;
+      case 'openInteractiveGraph':
+        vscode.commands.executeCommand('contextOptimizer.openInteractiveGraph');
+        break;
+      case 'openMermaidGraph':
+        vscode.commands.executeCommand('contextOptimizer.openMermaidGraph');
+        break;
+      case 'showError':
+        vscode.window.showErrorMessage(String(message.data));
+        break;
     }
   }
 
-  private getHtml(mem: ProjectMemory): string {
+  private getHtml(): string {
     const nonce = this.getNonce();
     const cspSource = this.panel.webview.cspSource;
+    const mermaidUri = this.panel.webview.asWebviewUri(
+      vscode.Uri.joinPath(this.extensionUri, 'media', 'mermaid.min.js')
+    );
 
     return `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${cspSource} 'nonce-${nonce}'; script-src 'nonce-${nonce}'; font-src ${cspSource} https:;"/>
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${cspSource} 'unsafe-inline'; script-src ${cspSource} 'unsafe-inline' 'unsafe-eval'; font-src ${cspSource} https:;"/>
   <title>Context Optimizer Dashboard</title>
-  <style nonce="${nonce}">
+  <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
 
     :root {
@@ -385,9 +414,11 @@ export class DashboardPanel {
   </div>
 </div>
 
-<script nonce="${nonce}">
+<script src="${mermaidUri}"></script>
+<script>
   const vscode = acquireVsCodeApi();
-  let currentMemory = ${JSON.stringify(mem)};
+  let currentMemory = null;
+  let currentMermaidCode = "";
 
   document.addEventListener('click', event => {
     const target = event.target;
@@ -428,7 +459,16 @@ export class DashboardPanel {
     return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
   }
 
-  function render(mem) {
+  function render(mem, mermaidCode = "") {
+    if (!mem) {
+      document.getElementById('app').innerHTML = \`
+        <div class="empty">
+          <div class="empty-icon">🧠</div>
+          <div>Loading dashboard...</div>
+        </div>
+      \`;
+      return;
+    }
     const stats = mem.meta?.tokenEstimate || {};
     const savedPct = stats.savedPercent || 0;
     const hasData = mem.project?.name;
@@ -587,6 +627,27 @@ export class DashboardPanel {
         </div>\` : ''}
       </div>\` : ''}
 
+      <!-- Visual Codebase Graph -->
+      \${mermaidCode ? \`
+      <div class="card section-row" style="margin-bottom: 24px;">
+        <div class="section-title" style="display: flex; align-items: center; justify-content: space-between; width: 100%; flex-wrap: wrap; gap: 8px;">
+          <span>🔮 Codebase Visual Graph</span>
+          <div style="display: flex; gap: 6px; flex-wrap: wrap;">
+            <button class="btn btn-primary" data-cmd="openInteractiveGraph" style="padding: 4px 8px; font-size: 11px;">🔮 Interactive Graph (Fullscreen)</button>
+            <button class="btn btn-primary" data-cmd="openMermaidGraph" style="padding: 4px 8px; font-size: 11px;">📊 Flowchart (Fullscreen)</button>
+            <button class="btn btn-secondary" id="btn-zoom-in" style="padding: 4px 8px; font-size: 11px;">➕ Zoom In</button>
+            <button class="btn btn-secondary" id="btn-zoom-out" style="padding: 4px 8px; font-size: 11px;">➖ Zoom Out</button>
+            <button class="btn btn-secondary" id="btn-zoom-reset" style="padding: 4px 8px; font-size: 11px;">🔄 Reset Zoom</button>
+            <button class="btn btn-secondary" id="btn-download-mermaid" style="padding: 4px 8px; font-size: 11px;">📥 Download Source</button>
+            <button class="btn btn-secondary" id="btn-download-svg" style="padding: 4px 8px; font-size: 11px;">🖼️ Download SVG</button>
+          </div>
+        </div>
+        <div class="scroll-container" id="mermaid-scroll-container" style="max-height: 600px; overflow: auto; background: #0b0e14; padding: 20px; border-radius: 8px; cursor: grab; user-select: none;">
+          <div class="mermaid" id="mermaid-graph" style="transform-origin: top center; transition: transform 0.15s ease-in-out;">\${mermaidCode}</div>
+        </div>
+      </div>
+      \` : ''}
+
       <!-- Footer -->
       <div class="meta-row">
         <div class="meta-dot"></div>
@@ -598,19 +659,182 @@ export class DashboardPanel {
     \`;
 
     document.getElementById('app').innerHTML = html;
+
+    if (mermaidCode && typeof mermaid !== 'undefined') {
+      try {
+        mermaid.initialize({
+          startOnLoad: false,
+          theme: 'dark',
+          securityLevel: 'loose',
+          maxTextSize: 10000000,
+          flowchart: { useMaxWidth: true, htmlLabels: true }
+        });
+      } catch (err) {
+        console.error("Failed to initialize mermaid:", err);
+      }
+
+      const container = document.getElementById('mermaid-graph');
+      if (container) {
+        // Show temporary status to prevent visual locking
+        container.innerHTML = '<div style="color:#94a3b8;padding:40px;text-align:center">Computing visual layout...</div>';
+        
+        setTimeout(() => {
+          container.removeAttribute('data-processed');
+          container.innerHTML = mermaidCode;
+          try {
+            if (typeof mermaid.run === 'function') {
+              mermaid.run({ nodes: [container] });
+            } else {
+              mermaid.init(undefined, container);
+            }
+          } catch (err) {
+            console.error("Mermaid render error:", err);
+            container.innerHTML = '<div style="color:#f43f5e;padding:20px;font-family:monospace">⚠ Mermaid render error: ' + (err && err.message ? err.message : String(err)) + '</div>';
+          }
+        }, 50);
+      }
+
+      // Attach zoom & download event listeners
+      let mermaidScale = 1.0;
+      const updateScale = () => {
+        const svgEl = document.querySelector('#mermaid-graph svg');
+        if (svgEl) {
+          svgEl.style.transform = 'scale(' + mermaidScale + ')';
+          svgEl.style.transformOrigin = 'top center';
+          svgEl.style.transition = 'transform 0.15s ease-in-out';
+        }
+      };
+
+      // Click-and-drag panning & wheel zoom logic
+      const scrollEl = document.getElementById('mermaid-scroll-container');
+      if (scrollEl) {
+        let isDown = false;
+        let startX, startY;
+        let scrollLeft, scrollTop;
+
+        scrollEl.addEventListener('mousedown', (e) => {
+          // Only trigger drag scroll on left click
+          if (e.button !== 0) return;
+          isDown = true;
+          scrollEl.style.cursor = 'grabbing';
+          startX = e.pageX - scrollEl.offsetLeft;
+          startY = e.pageY - scrollEl.offsetTop;
+          scrollLeft = scrollEl.scrollLeft;
+          scrollTop = scrollEl.scrollTop;
+        });
+
+        scrollEl.addEventListener('mouseleave', () => {
+          isDown = false;
+          scrollEl.style.cursor = 'grab';
+        });
+
+        scrollEl.addEventListener('mouseup', () => {
+          isDown = false;
+          scrollEl.style.cursor = 'grab';
+        });
+
+        scrollEl.addEventListener('mousemove', (e) => {
+          if (!isDown) return;
+          e.preventDefault();
+          const x = e.pageX - scrollEl.offsetLeft;
+          const y = e.pageY - scrollEl.offsetTop;
+          const walkX = (x - startX) * 1.5;
+          const walkY = (y - startY) * 1.5;
+          scrollEl.scrollLeft = scrollLeft - walkX;
+          scrollEl.scrollTop = scrollTop - walkY;
+        });
+
+        // Ctrl + Mouse Wheel to zoom
+        scrollEl.addEventListener('wheel', (e) => {
+          if (e.ctrlKey) {
+            e.preventDefault();
+            if (e.deltaY < 0) {
+              mermaidScale = Math.min(3.0, mermaidScale + 0.15);
+            } else {
+              mermaidScale = Math.max(0.2, mermaidScale - 0.15);
+            }
+            updateScale();
+          }
+        }, { passive: false });
+      }
+
+      const btnZoomIn = document.getElementById('btn-zoom-in');
+      if (btnZoomIn) {
+        btnZoomIn.addEventListener('click', () => {
+          mermaidScale = Math.min(3.0, mermaidScale + 0.15);
+          updateScale();
+        });
+      }
+
+      const btnZoomOut = document.getElementById('btn-zoom-out');
+      if (btnZoomOut) {
+        btnZoomOut.addEventListener('click', () => {
+          mermaidScale = Math.max(0.2, mermaidScale - 0.15);
+          updateScale();
+        });
+      }
+
+      const btnZoomReset = document.getElementById('btn-zoom-reset');
+      if (btnZoomReset) {
+        btnZoomReset.addEventListener('click', () => {
+          mermaidScale = 1.0;
+          updateScale();
+        });
+      }
+
+      const btnDownloadMermaid = document.getElementById('btn-download-mermaid');
+      if (btnDownloadMermaid) {
+        btnDownloadMermaid.addEventListener('click', () => {
+          const blob = new Blob([mermaidCode], { type: 'text/plain;charset=utf-8' });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = 'codebase_graph.mermaid';
+          a.click();
+          URL.revokeObjectURL(url);
+        });
+      }
+
+      const btnDownloadSvg = document.getElementById('btn-download-svg');
+      if (btnDownloadSvg) {
+        btnDownloadSvg.addEventListener('click', () => {
+          const svgEl = document.querySelector('#mermaid-graph svg');
+          if (svgEl) {
+            const serializer = new XMLSerializer();
+            let source = serializer.serializeToString(svgEl);
+            if (!source.includes('xmlns="http://www.w3.org/2000/svg"')) {
+              source = source.replace('<svg', '<svg xmlns="http://www.w3.org/2000/svg"');
+            }
+            const blob = new Blob([source], { type: 'image/svg+xml;charset=utf-8' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'codebase_graph.svg';
+            a.click();
+            URL.revokeObjectURL(url);
+          } else {
+            vscode.postMessage({ command: 'showError', data: 'Rendered SVG not found yet. Please wait for graph rendering.' });
+          }
+        });
+      }
+    }
   }
 
   // Initial render
-  render(currentMemory);
+  render(currentMemory, currentMermaidCode);
 
   // Listen for updates from extension
   window.addEventListener('message', event => {
     const msg = event.data;
     if (msg.command === 'update') {
-      currentMemory = msg.data;
-      render(currentMemory);
+      currentMemory = msg.data.mem;
+      currentMermaidCode = msg.data.mermaidCode;
+      render(currentMemory, currentMermaidCode);
     }
   });
+
+  // Signal that we are ready to receive the state
+  vscode.postMessage({ command: 'ready' });
 </script>
 </body>
 </html>`;

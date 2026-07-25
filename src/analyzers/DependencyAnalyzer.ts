@@ -27,6 +27,7 @@ export class DependencyAnalyzer {
       dependencies: { production: {}, development: {}, frameworks: [] },
       project: { name: '', description: '', goals: [], version: '' },
       stack: { frontend: '', backend: '', database: '', auth: '', devOps: '', other: [] },
+      features: { completed: [], pending: [], inProgress: [] },
     };
 
     // Try package.json (Node.js)
@@ -40,6 +41,9 @@ export class DependencyAnalyzer {
 
     // Try go.mod (Go)
     await this.analyzeGoMod(result);
+
+    // Try README feature extraction
+    await this.analyzeReadmeFeatures(result);
 
     return result;
   }
@@ -60,6 +64,7 @@ export class DependencyAnalyzer {
 
       const prod = pkg.dependencies ?? {};
       const dev = pkg.devDependencies ?? {};
+      const scripts = pkg.scripts ?? {};
 
       if (result.dependencies) {
         result.dependencies.production = prod;
@@ -67,13 +72,66 @@ export class DependencyAnalyzer {
         result.dependencies.frameworks = this.detectFrameworks({ ...prod, ...dev });
       }
 
-      // Infer stack from frameworks
+      // Infer stack from frameworks & dependencies
       this.inferStack(result, { ...prod, ...dev });
+
+      // Auto-extract features from package.json scripts
+      this.extractFeaturesFromScripts(result, scripts);
 
       logger.info(`DependencyAnalyzer: Parsed package.json for "${pkg.name}"`);
     } catch (err) {
       logger.warn('DependencyAnalyzer: Failed to parse package.json');
     }
+  }
+
+  private extractFeaturesFromScripts(result: Partial<ProjectMemory>, scripts: Record<string, string>): void {
+    if (!result.features) return;
+
+    const scriptNames = Object.keys(scripts);
+    const completedSet = new Set(result.features.completed || []);
+    const pendingSet = new Set(result.features.pending || []);
+
+    if (scriptNames.includes('build') || scriptNames.includes('package') || scriptNames.includes('compile')) {
+      completedSet.add('Build Pipeline & Code Compilation');
+    }
+    if (scriptNames.includes('test')) {
+      completedSet.add('Automated Test Suite Runner');
+    }
+    if (scriptNames.includes('lint')) {
+      completedSet.add('Static Code Analysis & Linting');
+    }
+    if (scriptNames.includes('dev') || scriptNames.includes('watch') || scriptNames.includes('start')) {
+      completedSet.add('Local Dev Environment Setup');
+    }
+
+    result.features.completed = Array.from(completedSet);
+    result.features.pending = Array.from(pendingSet);
+  }
+
+  private async analyzeReadmeFeatures(result: Partial<ProjectMemory>): Promise<void> {
+    const readmePath = path.join(this.workspaceRoot, 'README.md');
+    const content = await readFileSafe(readmePath);
+    if (!content || !result.features) return;
+
+    const completedSet = new Set(result.features.completed || []);
+    const pendingSet = new Set(result.features.pending || []);
+
+    const lines = content.split('\n');
+    for (const line of lines) {
+      const trimmed = line.trim();
+      // Checkbox features
+      const checkedMatch = trimmed.match(/^-\s*\[x\]\s*(.+)/i);
+      if (checkedMatch) {
+        completedSet.add(checkedMatch[1].replace(/[*`_]/g, '').trim());
+      }
+      const uncheckedMatch = trimmed.match(/^-\s*\[\s*\]\s*(.+)/i);
+      if (uncheckedMatch) {
+        pendingSet.add(uncheckedMatch[1].replace(/[*`_]/g, '').trim());
+      }
+    }
+
+    result.features.completed = Array.from(completedSet);
+    result.features.pending = Array.from(pendingSet);
   }
 
   private async analyzeRequirements(result: Partial<ProjectMemory>): Promise<void> {
@@ -101,6 +159,8 @@ export class DependencyAnalyzer {
       if (result.stack) result.stack.backend = 'Python Django';
     } else if (allPkgs.some(p => p.toLowerCase() === 'flask')) {
       if (result.stack) result.stack.backend = 'Python Flask';
+    } else if (result.stack && !result.stack.backend) {
+      result.stack.backend = 'Python';
     }
   }
 
@@ -150,10 +210,13 @@ export class DependencyAnalyzer {
     if (deps.includes('next')) result.stack.frontend = 'Next.js (React)';
     else if (deps.includes('nuxt')) result.stack.frontend = 'Nuxt.js (Vue)';
     else if (deps.includes('@sveltejs/kit')) result.stack.frontend = 'SvelteKit';
-    else if (deps.includes('react-dom')) result.stack.frontend = 'React';
+    else if (deps.includes('react-dom') || deps.includes('react')) result.stack.frontend = 'React';
     else if (deps.includes('vue')) result.stack.frontend = 'Vue.js';
     else if (deps.includes('@angular/core')) result.stack.frontend = 'Angular';
     else if (deps.includes('svelte')) result.stack.frontend = 'Svelte';
+    else if (deps.includes('@types/vscode') || deps.includes('vscode')) result.stack.frontend = 'VS Code API / Webviews';
+    else if (deps.includes('electron')) result.stack.frontend = 'Electron Desktop UI';
+    else result.stack.frontend = 'Vanilla HTML/CSS/JS';
 
     if (deps.includes('tailwindcss') && result.stack.frontend) {
       result.stack.frontend += ' + Tailwind CSS';
@@ -165,17 +228,22 @@ export class DependencyAnalyzer {
       else if (deps.includes('express')) result.stack.backend = 'Node.js Express';
       else if (deps.includes('fastify')) result.stack.backend = 'Node.js Fastify';
       else if (deps.includes('hono')) result.stack.backend = 'Node.js Hono';
+      else if (deps.includes('@types/vscode') || deps.includes('vscode')) result.stack.backend = 'Node.js + VS Code Extension Engine (TypeScript)';
+      else if (deps.includes('typescript')) result.stack.backend = 'Node.js (TypeScript)';
+      else result.stack.backend = 'Node.js (JavaScript)';
     }
 
     // Database
     if (deps.includes('mongoose')) result.stack.database = 'MongoDB (Mongoose)';
-    else if (deps.includes('@prisma/client')) result.stack.database = 'Prisma ORM';
+    else if (deps.includes('@prisma/client') || deps.includes('prisma')) result.stack.database = 'Prisma ORM';
     else if (deps.includes('typeorm')) result.stack.database = 'TypeORM';
     else if (deps.includes('drizzle-orm')) result.stack.database = 'Drizzle ORM';
     else if (deps.includes('@supabase/supabase-js')) result.stack.database = 'Supabase';
     else if (deps.includes('firebase')) result.stack.database = 'Firebase';
     else if (deps.includes('pg')) result.stack.database = 'PostgreSQL';
     else if (deps.includes('mysql2') || deps.includes('mysql')) result.stack.database = 'MySQL';
+    else if (deps.includes('sqlite3') || deps.includes('better-sqlite3')) result.stack.database = 'SQLite';
+    else result.stack.database = 'File System JSON Storage';
 
     // Auth
     if (deps.includes('jsonwebtoken') || deps.includes('jose')) result.stack.auth = 'JWT';
@@ -186,5 +254,8 @@ export class DependencyAnalyzer {
 
     // DevOps
     if (deps.includes('docker')) result.stack.devOps = 'Docker';
+    else if (deps.includes('esbuild')) result.stack.devOps = 'esbuild Fast Bundler';
+    else if (deps.includes('vite')) result.stack.devOps = 'Vite Build System';
+    else if (deps.includes('webpack')) result.stack.devOps = 'Webpack Bundler';
   }
 }

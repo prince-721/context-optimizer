@@ -40,7 +40,20 @@ export const DEFAULT_IGNORE_PATTERNS: string[] = [
 ];
 
 /** File priority levels */
-export type FilePriority = 'critical' | 'high' | 'medium' | 'low' | 'ignore';
+export type FilePriority = 'critical' | 'high' | 'medium' | 'low' | 'test' | 'ignore';
+
+/** Test file patterns */
+export const TEST_FILE_PATTERNS: string[] = [
+  '**/*.test.ts',
+  '**/*.spec.ts',
+  '**/*.test.tsx',
+  '**/*.spec.tsx',
+  '**/*.test.js',
+  '**/*.spec.js',
+  '**/*.test.jsx',
+  '**/*.spec.jsx',
+  '**/__tests__/**',
+];
 
 /** Files/patterns considered critical (analyzed deeply) */
 export const CRITICAL_FILE_PATTERNS: string[] = [

@@ -21,7 +21,8 @@ export type ContextItemType =
   | 'dependency'
   | 'env-var'
   | 'db-model'
-  | 'architecture';
+  | 'architecture'
+  | 'graph-link';
 
 export class ContextItem extends vscode.TreeItem {
   constructor(
@@ -59,6 +60,7 @@ export class ContextItem extends vscode.TreeItem {
       architecture: '$(circuit-board)',
       section: '$(folder)',
       root: '$(root-folder)',
+      'graph-link': '$(graph)',
     };
 
     const icon = icons[this.itemType];
@@ -213,6 +215,9 @@ export class SummaryTreeProvider implements vscode.TreeDataProvider<ContextItem>
 
   private buildTokenStatsSection(mem: ProjectMemory): ContextItem {
     const stats = mem.meta.tokenEstimate;
+    const savedTokens = Math.max(0, stats.original - stats.compressed);
+    const dollars = (savedTokens * 0.000003).toFixed(2);
+
     const children: ContextItem[] = [
       new ContextItem('Original', vscode.TreeItemCollapsibleState.None, 'token-stats',
         `${stats.original.toLocaleString()} tokens`),
@@ -220,6 +225,8 @@ export class SummaryTreeProvider implements vscode.TreeDataProvider<ContextItem>
         `${stats.compressed.toLocaleString()} tokens`),
       new ContextItem('Saved', vscode.TreeItemCollapsibleState.None, 'token-stats',
         `${stats.savedPercent}% reduction`),
+      new ContextItem('Est. Cost Saved', vscode.TreeItemCollapsibleState.None, 'token-stats',
+        `~$${dollars}`),
       new ContextItem('Last Updated', vscode.TreeItemCollapsibleState.None, 'note',
         new Date(mem.meta.lastUpdated).toLocaleString()),
     ];
@@ -354,5 +361,48 @@ export class StatsTreeProvider implements vscode.TreeDataProvider<ContextItem> {
     }
 
     return items;
+  }
+}
+
+// ─── Graphs Tree Provider ─────────────────────────────────────────────────────
+
+export class GraphsTreeProvider implements vscode.TreeDataProvider<ContextItem> {
+  private _onDidChangeTreeData = new vscode.EventEmitter<ContextItem | undefined | void>();
+  readonly onDidChangeTreeData = this._onDidChangeTreeData.event;
+
+  constructor(private memoryManager: MemoryManager) {
+    memoryManager.onDidChange(() => this.refresh());
+  }
+
+  refresh(): void {
+    this._onDidChangeTreeData.fire();
+  }
+
+  getTreeItem(element: ContextItem): vscode.TreeItem {
+    return element;
+  }
+
+  getChildren(element?: ContextItem): ContextItem[] {
+    if (element) return [];
+
+    const dashboardItem = new ContextItem('📈 View Dashboard', vscode.TreeItemCollapsibleState.None, 'graph-link');
+    dashboardItem.command = {
+      command: 'contextOptimizer.openDashboard',
+      title: 'View Dashboard'
+    };
+
+    const interactiveItem = new ContextItem('🔮 Interactive Force Graph', vscode.TreeItemCollapsibleState.None, 'graph-link');
+    interactiveItem.command = {
+      command: 'contextOptimizer.openInteractiveGraph',
+      title: 'Interactive Force Graph'
+    };
+
+    const flowchartItem = new ContextItem('📊 Hierarchical Flowchart Graph', vscode.TreeItemCollapsibleState.None, 'graph-link');
+    flowchartItem.command = {
+      command: 'contextOptimizer.openMermaidGraph',
+      title: 'Hierarchical Flowchart Graph'
+    };
+
+    return [dashboardItem, interactiveItem, flowchartItem];
   }
 }
